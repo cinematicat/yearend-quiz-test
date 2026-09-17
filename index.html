@@ -1,1 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>年底活動搶答大賽 - 主持人大螢幕</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+  <script src="questions.js"></script>
+</head>
+<body class="bg-slate-900 text-white min-h-screen p-6 flex flex-col items-center">
+  <header class="w-full max-w-5xl flex justify-between items-center py-4 border-b border-slate-700">
+    <h1 class="text-3xl font-extrabold tracking-wide text-indigo-400">年終盛典 · 互動搶答大賽</h1>
+    <div class="text-slate-400 text-sm">已連線人數：<span id="playerCount" class="text-2xl font-bold text-amber-400">0</span> 人</div>
+  </header>
 
+  <main class="w-full max-w-5xl flex-1 mt-6 flex flex-col justify-center items-center">
+    <!-- 階段 1：大廳等待區（QR Code） -->
+    <section id="lobbyView" class="w-full text-center">
+      <h2 class="text-2xl font-bold mb-4">掃描下方 QR Code 或輸入網址加入遊戲</h2>
+      <div id="qrcode" class="p-4 bg-white inline-block rounded-xl shadow-lg mb-4"></div>
+      <p id="playerUrl" class="text-slate-400 font-mono text-sm mb-6"></p>
+      
+      <div class="w-full max-w-2xl mx-auto bg-slate-800 p-4 rounded-xl">
+        <h3 class="text-slate-300 font-semibold mb-3">已加入夥伴：</h3>
+        <div id="playerChips" class="flex flex-wrap gap-2 justify-center max-h-48 overflow-y-auto"></div>
+      </div>
+
+      <button id="btnStartGame" class="mt-8 px-8 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-lg font-bold shadow-lg transition">
+        開始搶答活動
+      </button>
+    </section>
+
+    <!-- 階段 2：題目畫面 -->
+    <section id="questionView" class="w-full hidden text-center">
+      <div class="flex justify-between items-center mb-6">
+        <span id="qNumber" class="text-xl font-bold text-indigo-400"></span>
+        <span id="submitCount" class="text-slate-400 text-sm">已作答：<span class="text-emerald-400 font-bold">0</span> 人</span>
+      </div>
+      <h2 id="qText" class="text-3xl font-bold mb-8 leading-snug"></h2>
+      <div id="qOptions" class="grid grid-cols-2 gap-4 max-w-3xl mx-auto mb-8"></div>
+
+      <button id="btnReveal" class="px-8 py-3 bg-amber-500 hover:bg-amber-400 text-slate-900 rounded-lg text-lg font-bold shadow-lg transition">
+        公布答案與本題前三名
+      </button>
+    </section>
+
+    <!-- 階段 3：本題榜單 -->
+    <section id="roundResultView" class="w-full hidden text-center">
+      <h2 class="text-3xl font-bold text-emerald-400 mb-2">正確答案：<span id="correctAnswerText"></span></h2>
+      <h3 class="text-xl text-slate-300 mb-6">本題手速最快前 3 名</h3>
+      <div id="top3List" class="max-w-md mx-auto space-y-3 mb-8"></div>
+      <button id="btnNext" class="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-lg font-bold shadow-lg transition">
+        下一題
+      </button>
+    </section>
+
+    <!-- 階段 4：最終前 10 名排行榜 -->
+    <section id="finalLeaderboardView" class="w-full hidden text-center">
+      <h2 class="text-4xl font-extrabold text-amber-400 mb-2">🏆 最終榮譽排行榜 TOP 10 🏆</h2>
+      <p class="text-slate-400 mb-6">計分規則：每題答對得 10 分，同分者依累積作答總時間排序</p>
+      <div id="top10List" class="max-w-2xl mx-auto space-y-2"></div>
+      <button id="btnReset" class="mt-8 px-6 py-2 bg-slate-700 hover:bg-slate-600 rounded text-sm text-slate-300">
+        重置遊戲回到大廳
+      </button>
+    </section>
+  </main>
+
+  <script>
+    // ！！！請換成你的 Firebase 設定！！！
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // 產生玩家網址與 QR Code
+    const playerUrl = window.location.href.replace(/index\.html$/, '').replace(/\/$/, '') + '/player.html';
+    document.getElementById('playerUrl').innerText = playerUrl;
+    new QRCode(document.getElementById("qrcode"), {
+      text: playerUrl,
+      width: 180,
+      height: 180
+    });
+
+    let currentQIndex = 0;
+    let players = {};
+    let currentResponses = {};
+
+    // 監聽玩家加入
+    db.ref('players').on('value', snapshot => {
+      players = snapshot.val() || {};
+      const names = Object.values(players).map(p => p.name);
+      document.getElementById('playerCount').innerText = names.length;
+      document.getElementById('playerChips').innerHTML = names
+        .map(n => `<span class="bg-slate-700 text-slate-200 px-3 py-1 rounded-full text-sm">${n}</span>`)
+        .join('');
+    });
+
+    // 監聽作答進度
+    db.ref('responses').on('value', snapshot => {
+      currentResponses = snapshot.val() || {};
+      const count = Object.keys(currentResponses).length;
+      const span = document.querySelector('#submitCount span');
+      if (span) span.innerText = count;
+    });
+
+    // 控制流程切換
+    function showView(viewId) {
+      ['lobbyView', 'questionView', 'roundResultView', 'finalLeaderboardView'].forEach(id => {
+        document.getElementById(id).classList.add('hidden');
+      });
+      document.getElementById(viewId).classList.remove('hidden');
+    }
+
+    // 開始出題
+    function loadQuestion(index) {
+      currentQIndex = index;
+      const q = QUIZ_QUESTIONS[index];
+      db.ref('responses').remove(); // 清除上一題作答紀錄
+      db.ref('gameState').set({
+        status: 'QUESTION',
+        qIndex: index,
+        question: q.question,
+        options: q.options,
+        startTime: firebase.database.ServerValue.TIMESTAMP
+      });
+
+      document.getElementById('qNumber').innerText = `第 ${index + 1} / ${QUIZ_QUESTIONS.length} 題`;
+      document.getElementById('qText').innerText = q.question;
+      const letters = ['A', 'B', 'C', 'D'];
+      document.getElementById('qOptions').innerHTML = q.options.map((opt, i) => `
+        <div class="p-4 bg-slate-800 border border-slate-700 rounded-xl text-left font-medium">
+          <span class="inline-block w-8 h-8 text-center leading-8 rounded-full bg-slate-700 text-indigo-400 mr-2 font-bold">${letters[i]}</span>
+          ${opt}
+        </div>
+      `).join('');
+      showView('questionView');
+    }
+
+    document.getElementById('btnStartGame').onclick = () => loadQuestion(0);
+
+    // 公布本題答案
+    document.getElementById('btnReveal').onclick = () => {
+      const q = QUIZ_QUESTIONS[currentQIndex];
+      const correctIndex = q.answerIndex;
+      const correctAnsText = `${['A', 'B', 'C', 'D'][correctIndex]}. ${q.options[correctIndex]}`;
+      document.getElementById('correctAnswerText').innerText = correctAnsText;
+
+      // 篩選出答對者並按耗時由短到長排序
+      const answers = Object.entries(currentResponses).map(([pid, data]) => ({
+        playerId: pid,
+        name: players[pid]?.name || '未知',
+        choice: data.choice,
+        elapsed: data.elapsedTime || 999999
+      }));
+
+      const correctPlayers = answers.filter(a => a.choice === correctIndex).sort((a, b) => a.elapsed - b.elapsed);
+
+      // 本題前 3 名渲染
+      const top3 = correctPlayers.slice(0, 3);
+      document.getElementById('top3List').innerHTML = top3.length > 0 ? top3.map((p, idx) => `
+        <div class="flex justify-between items-center bg-slate-800 px-4 py-3 rounded-lg border border-slate-700">
+          <span class="font-bold text-amber-400">第 ${idx + 1} 名：${p.name}</span>
+          <span class="text-sm text-slate-400">${(p.elapsed / 1000).toFixed(2)} 秒</span>
+        </div>
+      `).join('') : '<p class="text-slate-400">本題無人答對！</p>';
+
+      // 更新全域成績資料庫
+      correctPlayers.forEach(p => {
+        db.ref(`scores/${p.playerId}/totalScore`).transaction(val => (val || 0) + 10);
+        db.ref(`scores/${p.playerId}/totalTime`).transaction(val => (val || 0) + p.elapsed);
+      });
+
+      // 同步切換手機端狀態
+      db.ref('gameState').update({
+        status: 'REVEAL',
+        answerIndex: correctIndex
+      });
+
+      showView('roundResultView');
+    };
+
+    // 下一題或進入最終排行
+    document.getElementById('btnNext').onclick = () => {
+      if (currentQIndex + 1 < QUIZ_QUESTIONS.length) {
+        loadQuestion(currentQIndex + 1);
+      } else {
+        // 進入總榜
+        db.ref('gameState').set({ status: 'FINISHED' });
+        db.ref('scores').once('value', snapshot => {
+          const scoreData = snapshot.val() || {};
+          const board = Object.keys(players).map(pid => ({
+            name: players[pid].name,
+            score: scoreData[pid]?.totalScore || 0,
+            time: scoreData[pid]?.totalTime || 0
+          }));
+
+          // 排序：先比分數（高到低），分數相同比累積耗時（低到高）
+          board.sort((a, b) => b.score - a.score || a.time - b.time);
+
+          const top10 = board.slice(0, 10);
+          document.getElementById('top10List').innerHTML = top10.map((p, idx) => `
+            <div class="flex justify-between items-center bg-slate-800 px-6 py-3 rounded-xl border border-slate-700">
+              <div class="flex items-center space-x-4">
+                <span class="font-black text-xl w-8 text-left ${idx < 3 ? 'text-amber-400 text-2xl' : 'text-slate-400'}">#${idx + 1}</span>
+                <span class="font-bold text-lg">${p.name}</span>
+              </div>
+              <div class="text-right">
+                <div class="text-emerald-400 font-extrabold text-xl">${p.score} 分</div>
+                <div class="text-xs text-slate-400">總耗時 ${(p.time / 1000).toFixed(2)} 秒</div>
+              </div>
+            </div>
+          `).join('');
+
+          showView('finalLeaderboardView');
+        });
+      }
+    };
+
+    // 重置遊戲
+    document.getElementById('btnReset').onclick = () => {
+      if (confirm("確定要重置所有題目與分數嗎？")) {
+        db.ref().set({
+          gameState: { status: 'LOBBY' }
+        });
+        location.reload();
+      }
+    };
+  </script>
+</body>
+</html>
