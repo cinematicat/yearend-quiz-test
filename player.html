@@ -1,1 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>搶答手機端</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+</head>
+<body class="bg-slate-900 text-white min-h-screen flex flex-col p-4 select-none">
+  <!-- 登入頁 -->
+  <div id="joinSection" class="my-auto max-w-sm w-full mx-auto text-center">
+    <h1 class="text-2xl font-bold mb-6 text-indigo-400">加入現場搶答</h1>
+    <input type="text" id="inputName" placeholder="請輸入姓名 / 暱稱" class="w-full px-4 py-3 rounded-lg bg-slate-800 border border-slate-600 mb-4 text-center text-lg focus:outline-none focus:border-indigo-500">
+    <button id="btnJoin" class="w-full py-3 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-lg font-bold">進入大廳</button>
+  </div>
 
+  <!-- 等待出題中 -->
+  <div id="waitSection" class="hidden my-auto text-center">
+    <div class="animate-pulse text-indigo-400 font-bold text-xl mb-2">等待主持人出題...</div>
+    <p class="text-slate-400 text-sm">請注視前方大螢幕</p>
+  </div>
+
+  <!-- 作答介面（包含題目與選項） -->
+  <div id="playSection" class="hidden flex-1 flex flex-col justify-between py-2">
+    <div>
+      <div id="pQIndex" class="text-xs text-indigo-400 font-bold tracking-wider uppercase mb-1"></div>
+      <h2 id="pQText" class="text-lg font-bold leading-snug mb-4"></h2>
+    </div>
+
+    <!-- 4 個大按鈕 -->
+    <div id="pOptionsContainer" class="flex flex-col gap-3 my-auto"></div>
+
+    <div id="submitStatus" class="text-center text-sm text-slate-400 h-6"></div>
+  </div>
+
+  <!-- 本題結算反饋 -->
+  <div id="resultSection" class="hidden my-auto text-center p-6 bg-slate-800 rounded-2xl">
+    <h2 id="resultTitle" class="text-2xl font-bold mb-2"></h2>
+    <p id="resultSubtitle" class="text-slate-400 text-sm"></p>
+  </div>
+
+  <!-- 活動結束 -->
+  <div id="finishSection" class="hidden my-auto text-center">
+    <h2 class="text-3xl font-bold text-amber-400 mb-2">🎉 活動圓滿結束 🎉</h2>
+    <p class="text-slate-300">請抬頭觀看大螢幕公布的 TOP 10 得獎名單！</p>
+  </div>
+
+  <script>
+    // ！！！請換成你的 Firebase 設定！！！
+    const firebaseConfig = {
+     const firebaseConfig = {
+  apiKey: "AIzaSyBUB6F_VrtnsTQJI0Mr7Hd2JJe3V06uJaA",
+  authDomain: "yearend-quiz.firebaseapp.com",
+  databaseURL: "https://yearend-quiz-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "yearend-quiz",
+  storageBucket: "yearend-quiz.firebasestorage.app",
+  messagingSenderId: "571814485129",
+  appId: "1:571814485129:web:7dcd2f8533f3d499113a58"
+};
+
+    const db = firebase.database();
+
+    let myPlayerId = localStorage.getItem('quiz_pid');
+    let myName = localStorage.getItem('quiz_pname');
+    let qStartTime = 0;
+    let hasAnswered = false;
+    let selectedChoice = -1;
+
+    function showSection(id) {
+      ['joinSection', 'waitSection', 'playSection', 'resultSection', 'finishSection'].forEach(s => {
+        document.getElementById(s).classList.add('hidden');
+      });
+      document.getElementById(id).classList.remove('hidden');
+    }
+
+    // 加入遊戲
+    document.getElementById('btnJoin').onclick = () => {
+      const name = document.getElementById('inputName').value.trim();
+      if (!name) return alert("請輸入暱稱！");
+      
+      myPlayerId = 'p_' + Math.random().toString(36).substr(2, 9);
+      myName = name;
+      localStorage.setItem('quiz_pid', myPlayerId);
+      localStorage.setItem('quiz_pname', myName);
+
+      db.ref(`players/${myPlayerId}`).set({ name: myName, joinedAt: Date.now() });
+      showSection('waitSection');
+    };
+
+    if (myPlayerId && myName) {
+      showSection('waitSection');
+    }
+
+    // 監聽大螢幕主狀態
+    db.ref('gameState').on('value', snapshot => {
+      const state = snapshot.val();
+      if (!state || state.status === 'LOBBY') {
+        if (myPlayerId) showSection('waitSection');
+        return;
+      }
+
+      if (state.status === 'QUESTION') {
+        hasAnswered = false;
+        selectedChoice = -1;
+        qStartTime = state.startTime || Date.now();
+
+        document.getElementById('pQIndex').innerText = `QUESTION ${state.qIndex + 1}`;
+        document.getElementById('pQText').innerText = state.question;
+        document.getElementById('submitStatus').innerText = "點選選項即可搶答！";
+
+        const btnColors = [
+          'bg-rose-600 active:bg-rose-700',
+          'bg-sky-600 active:bg-sky-700',
+          'bg-amber-600 active:bg-amber-700',
+          'bg-emerald-600 active:bg-emerald-700'
+        ];
+        const letters = ['A', 'B', 'C', 'D'];
+
+        document.getElementById('pOptionsContainer').innerHTML = state.options.map((opt, i) => `
+          <button onclick="submitAnswer(${i})" class="w-full py-4 px-4 rounded-xl text-left font-bold text-white shadow-md ${btnColors[i]} flex items-center space-x-3 transition">
+            <span class="w-8 h-8 rounded-full bg-black/20 flex items-center justify-center">${letters[i]}</span>
+            <span class="flex-1">${opt}</span>
+          </button>
+        `).join('');
+
+        showSection('playSection');
+      }
+
+      if (state.status === 'REVEAL') {
+        if (!hasAnswered) {
+          document.getElementById('resultTitle').innerText = "⏳ 逾時未作答";
+          document.getElementById('resultTitle').className = "text-2xl font-bold mb-2 text-slate-400";
+          document.getElementById('resultSubtitle').innerText = "下一題手速要更快喔！";
+        } else if (selectedChoice === state.answerIndex) {
+          document.getElementById('resultTitle').innerText = "🎉 恭喜答對！";
+          document.getElementById('resultTitle').className = "text-2xl font-bold mb-2 text-emerald-400";
+          document.getElementById('resultSubtitle').innerText = "獲得 10 分！請看大螢幕本題搶答排名！";
+        } else {
+          document.getElementById('resultTitle').innerText = "❌ 答錯了！";
+          document.getElementById('resultTitle').className = "text-2xl font-bold mb-2 text-rose-400";
+          document.getElementById('resultSubtitle').innerText = "本題未得分，下一題加油！";
+        }
+        showSection('resultSection');
+      }
+
+      if (state.status === 'FINISHED') {
+        showSection('finishSection');
+      }
+    });
+
+    window.submitAnswer = function(choice) {
+      if (hasAnswered) return;
+      hasAnswered = true;
+      selectedChoice = choice;
+
+      const now = Date.now();
+      const elapsed = Math.max(0, now - qStartTime);
+
+      db.ref(`responses/${myPlayerId}`).set({
+        choice: choice,
+        elapsedTime: elapsed,
+        timestamp: firebase.database.ServerValue.TIMESTAMP
+      });
+
+      document.getElementById('submitStatus').innerText = `✓ 已送出答案（耗時 ${(elapsed/1000).toFixed(2)} 秒），等待公佈結果...`;
+      // 鎖定按鈕不可再按
+      const buttons = document.querySelectorAll('#pOptionsContainer button');
+      buttons.forEach((btn, idx) => {
+        btn.disabled = true;
+        if (idx !== choice) btn.style.opacity = '0.3';
+      });
+    };
+  </script>
+</body>
+</html>
