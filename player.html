@@ -50,7 +50,6 @@
   <script>
     // ！！！請換成你的 Firebase 設定！！！
     const firebaseConfig = {
-     const firebaseConfig = {
   apiKey: "AIzaSyBUB6F_VrtnsTQJI0Mr7Hd2JJe3V06uJaA",
   authDomain: "yearend-quiz.firebaseapp.com",
   databaseURL: "https://yearend-quiz-default-rtdb.asia-southeast1.firebasedatabase.app",
@@ -59,9 +58,9 @@
   messagingSenderId: "571814485129",
   appId: "1:571814485129:web:7dcd2f8533f3d499113a58"
 };
-
+firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
-
+   
     let myPlayerId = localStorage.getItem('quiz_pid');
     let myName = localStorage.getItem('quiz_pname');
     let qStartTime = 0;
